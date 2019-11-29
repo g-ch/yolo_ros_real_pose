@@ -237,12 +237,12 @@ def detect_and_give_real_pose(current_total_dect, current_image,current_depth_im
     in_frame = in_frame.transpose((2, 0, 1))  # Change data layout from HWC to CHW
     in_frame = in_frame.reshape((n, c, h, w))
 
-    start_time = time.time()  ## TIMER Start #####
-
     try:
         exec_net.start_async(request_id=request_id, inputs={input_blob: in_frame})  ###### Most time is consumed here
     except:
         rospy.loginfo("Start async failed!")
+        cv2.imshow("DetectionResults", rgb_img_get)
+        cv2.waitKey(1)
         return current_img_to_pub, False
 
     # Collecting object detection results
@@ -252,6 +252,8 @@ def detect_and_give_real_pose(current_total_dect, current_image,current_depth_im
             output = exec_net.requests[cur_request_id].outputs
         except:
             rospy.loginfo("Process failed!")
+            cv2.imshow("DetectionResults", rgb_img_get)
+            cv2.waitKey(1)
             return current_img_to_pub, False
 
         for layer_name, out_blob in output.items():
@@ -280,13 +282,12 @@ def detect_and_give_real_pose(current_total_dect, current_image,current_depth_im
             log.info(" Class ID | Confidence | XMIN | YMIN | XMAX | YMAX | COLOR ")
     else:
         # rospy.loginfo("Found nothing!")
+        cv2.imshow("DetectionResults", rgb_img_get)
+        cv2.waitKey(1)
         return current_img_to_pub, False
 
     origin_im_size = rgb_img_get.shape[:-1]
     #print(objects)
-
-    parsing_time = time.time() - start_time
-    rospy.loginfo("parsing_time="+str(parsing_time))
 
 
     for obj in objects:
@@ -327,38 +328,44 @@ def detect_and_give_real_pose(current_total_dect, current_image,current_depth_im
             ### Calculate position here by depth image and camera parameters
             depth_box_width=obj['xmax']-obj['xmin']
             depth_box_height=obj['ymax']-obj['ymin']
-            #print(depth_box_width)
-            delta_rate=0.4
+            delta_rate=0.3
             x_box_min=int(obj['xmin'] + depth_box_width*delta_rate)
             y_box_min=int(obj['ymin'] + depth_box_height*delta_rate)
             x_box_max=int(obj['xmax'] - depth_box_width*delta_rate)
             y_box_max=int(obj['ymax'] - depth_box_height*delta_rate)
-            #print(x_box_min)
             after_width=(depth_box_width*(1-2*delta_rate))
             after_height=(depth_box_height*(1-2*delta_rate))
-            bb=depth_img_get[y_box_min:y_box_max,x_box_min:x_box_max]
-            z_pos=bb.sum()/(after_width*after_height)*0.001
-            #z_pos=sum(map(sum,bb))/(after_width*after_height)*0.001
-            x_pos = (0.5 * (x_box_min + x_box_max) - cx) * z_pos / fx;
-            y_pos = (0.5 * (y_box_min + y_box_max) - cy) * z_pos / fy;
+            '''  '''
+            rect = depth_img_get[y_box_min:y_box_max,x_box_min:x_box_max] * 0.001
+            rect[np.where(rect == 0)] = 99
+            print(rect.min())
+            # z_pos=bb.sum()/(after_width*after_height)*0.001
 
-            #print(x_pos)
-            # cv2.rectangle(rgb_img_get, (x_box_min,  y_box_min), (x_box_max,y_box_max), (0,255,255), 2)
-            #"x="+str(x_pos)+" y="+str(y_pos)+
-            info_pos=" z="+str(z_pos)
-            # cv2.putText(rgb_img_get,info_pos,(x_box_min,  y_box_min), cv2.FONT_HERSHEY_COMPLEX, 0.6, (0,255,0), 1)
+            # rect = depth_img_get[obj['xmin']:obj['xmax'], obj['ymin']:obj['ymax']]
+            # rect = rect
+
+            ''' Using EM, too slow '''
+            # print("In Em")
+            # em_start_time = time.time()
+            # EM_model = cv2.ml.EM_create()
+            # EM_model.setClustersNumber(2)
+            # EM_model.setCovarianceMatrixType(0)
+            # EM_model.setTermCriteria((cv2.TermCriteria_MAX_ITER, 1, 0.2))  # int type, int maxCount, double epsilon
+            # EM_model.trainEM(rect)
+            # print(time.time() - em_start_time)
+            # print("EM_model works fine")
+
+            x_pos = (0.5 * (obj['xmax'] + obj['xmin']) - cx) * z_pos / fx
+            y_pos = (0.5 * (obj['ymax'] + obj['ymin']) - cy) * z_pos / fy
+
             info.x=x_pos
             info.y=y_pos
             info.z=z_pos
 
         current_total_dect.result.append(info)
-    # sort_obj=sorted(current_total_dect.result,key=lambda obj : current_total_dect.result['label'], reverse=True)
+
     cv2.imshow("DetectionResults", rgb_img_get)
     cv2.waitKey(1)
-
-    parsing_time = time.time() - start_time
-    rospy.loginfo("get position time ="+str(parsing_time))
-
 
     return current_img_to_pub, True
 
@@ -415,17 +422,14 @@ def detection_loop():
             if rgb_img_update == 1 and depth_img_update==1:
                 if len(rgb_image)!=0 and len(depth_img)!=0:
                     total_dect = ObjectsRealPose()
-                    if_detected = False
 
                     try:
                         detection_start_time = time.time()
-                        # rospy.loginfo("start detection~~")
-                        img_to_pub, if_detected = detect_and_give_real_pose(total_dect, rgb_image, depth_img) #detection function
+                        img_to_pub, if_detected = detect_and_give_real_pose(total_dect, rgb_image, depth_img)  #detection function
                         rospy.loginfo("detection time =" + str(time.time()-detection_start_time))
 
                         if if_detected:
                             pub_total.publish(total_dect)
-                            #image_message = bridge.cv2_to_imgmsg(img_to_pub, encoding="passthrough")
                             corresponding_img_pub.publish(img_to_pub)
                     except:
                         rospy.loginfo("detection error!")

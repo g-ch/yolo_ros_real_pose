@@ -7,4 +7,6 @@ uint16 pix_rb_y
 float32 x
 float32 y
 float32 z
+float32 head_yaw
+geometry_msgs/Pose local_pose
 
